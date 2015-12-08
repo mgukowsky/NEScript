@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>NEScript</title>
+	<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+	<h1>NEScript</h1>
+	<canvas id="canvas"></canvas>
+	<canvas id="vram-visualizer"></canvas>
+	<label>
+		Open a ROM from your computer:
+		<input id="open-local-rom" type="file" accept=".nes">
+	</label>
+	<script type="text/javascript" src="js/RAM.js"></script>
+	<script type="text/javascript" src="js/cpu.js"></script>
+	<script type="text/javascript" src="js/ppu.js"></script>
+	<script type="text/javascript" src="js/rom.js"></script>
+	<script type="text/javascript" src="js/controller.js"></script>
+	<script type="text/javascript" src="js/mappers.js"></script>
+	<script type="text/javascript" src="js/nescript.js"></script>
+	<script type="text/javascript">
+		var EMULATOR = new NEScript.Emulator();
+
+		document.getElementById("open-local-rom").addEventListener("change", openROM);
+
+		function openROM(event){
+			event.stopPropagation
+			event.preventDefault();
+
+			var f = new FileReader()
+			f.onload = function(eventData){ //File contents will be in f.result, NOT the event object
+				var rawData = new Uint8Array(f.result);
+				EMULATOR.startROM(rawData);
+			}
+
+			f.readAsArrayBuffer(event.target.files[0])
+		}
+	</script>
+</body>
+</html>
