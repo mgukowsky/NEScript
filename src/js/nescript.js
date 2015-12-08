@@ -110,17 +110,19 @@
 		//Could use a worker, but we would lose access to the global namespace, and PPU 
 		//would lose the ability to manipulate the DOM and update the canvas.
 		//Downside is that a backlog within the callback WILL block on the page :/
+		var LIMIT = Math.floor(NTSC_CPU_RATE / 20);
 		this._mainLoopID = setInterval(function(){
 			if(NEScript.IS_RUNNING){
 				//Execute x CPU cycles every second, where x = CPU clock speed in Hz
-				for(cpuCounter = 0; cpuCounter < Math.floor(NTSC_CPU_RATE / 20); cpuCounter++){
+				for(cpuCounter = 0; cpuCounter < LIMIT; cpuCounter++){
 				//Execute next instruction, then do 3 PPU cycles for every cycle the CPU took
 					var ppuCycles = this.CPU.executeNext();
 					//Check for R/W to registers before invoking the PPU
 					this.Mapper.monitorProc();
 					//Only have the PPU check on the first tick of the group
 					this.PPU.tick(true);
-					for(ppuCounter = 1; ppuCounter < ppuCycles * 3; ppuCounter++){
+					var PPU_LIMIT = ppuCycles * 3;
+					for(ppuCounter = 1; ppuCounter < PPU_LIMIT; ppuCounter++){
 						this.PPU.tick(false);
 					}
 				}

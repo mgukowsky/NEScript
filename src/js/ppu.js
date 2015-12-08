@@ -190,6 +190,7 @@
 		//screen. Every 4 bytes represents and RGBA value.
 		//CAUTION: this is a Uint8ClampedArray
 		this._vbuffer = this.ctx.createImageData(this.canvasEl.width, this.canvasEl.height);
+		this._vbData = this._vbuffer.data;
 
 		this.spriteWorkspace = this.ctx.createImageData(this.canvasEl.width, this.canvasEl.height);
 		//NTs at $2000, $2400, $2800, and $2C00
@@ -215,8 +216,9 @@
 		this._VRAM = new NEScript.RAM(0x4000);
 		this._OAM = new NEScript.RAM(0x100);
 		this._vbuffer = this.ctx.createImageData(this.canvasEl.width, this.canvasEl.height);
-		
-		for(var i = 0; i < this._vbuffer.data.length; i += 4){
+		var vbLimit = this._vbuffer.data.length;
+
+		for(var i = 0; i < vbLimit; i += 4){
 			this._vbuffer.data[i] = 0;
 			this._vbuffer.data[i + 1] = 0;
 			this._vbuffer.data[i + 2] = 0;
@@ -269,6 +271,8 @@
 	//Write an RGBA pixel to this._vbuffer
 	PPU.prototype.blitPixel = function(x, y, r, g, b, alpha, options){
 		options = options || {};
+
+		//Making the default destination this._vbData seems to break the reference to _vbuffer.data
 		var destination = options.destination || this._vbuffer.data;
 
 		var vIdx = this.cartesianToIdx(x, y);
@@ -445,7 +449,9 @@
 	}
 
 	PPU.prototype.clearScreen = function(){
-		for(var i = 0; i < this._vbuffer.data.length; i += 4){
+		var vbLimit = this._vbData.length;
+
+		for(var i = 0; i < vbLimit; i += 4){
 			this._vbuffer.data[i] = 0;
 			this._vbuffer.data[i + 1] = 0;
 			this._vbuffer.data[i + 2] = 0;
@@ -602,7 +608,8 @@
 
 	//Makes all pixels TRANSPARENT
 	function clearInternalWorkspace(workspaceRef){
-		for(var i = 0; i < workspaceRef.length; i += 4){
+		var LIMIT = workspaceRef.length;
+		for(var i = 0; i < LIMIT; i += 4){
 			workspaceRef[i] = 0;
 			workspaceRef[i + 1] = 0;
 			workspaceRef[i + 2] = 0;

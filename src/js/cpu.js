@@ -147,12 +147,12 @@
 		//Given this implementation, the second 'this' is what get matters (it gets pushed on as
 		//the last argument to the bound function that is retrieved from procMap).
 		//Given this, the first 'this' is superfluous, but semantically is a bit clearer
-		try{
+		//try{
 			var cyclesTaken = procMap[opcode].call(this, this);
-		} catch(e){
-			var errMsg = "Tried to execute illegal opcode: 0x" + opcode.toString(16);
-			throw new Error(errMsg);
-		}
+		//} catch(e){
+			// var errMsg = "Tried to execute illegal opcode: 0x" + opcode.toString(16);
+			// throw new Error(errMsg);
+		//}
 
 		//Some opcodes require an extra cycle or two if certain conditions were met during 
 		//opcode logic
@@ -237,17 +237,19 @@
 	//stack to wrap
 	CPU.prototype.pushWord = function(val){
 		//Hi byte at higher stack address
-		this.writeByte(this._regs[regSP] + STACK_OFFSET, (val & 0xFF00) >> 8);
+		var sO = STACK_OFFSET; //Tiny scope optimization
+		this.writeByte(this._regs[regSP] + sO, (val & 0xFF00) >> 8);
 		this._regs[regSP] -= 1
-		this.writeByte(this._regs[regSP] + STACK_OFFSET, val & 0xFF);
+		this.writeByte(this._regs[regSP] + sO, val & 0xFF);
 		this._regs[regSP] -= 1;
 	}
 
 	CPU.prototype.popWord = function(val){
+		var sO = STACK_OFFSET;
 		this._regs[regSP] += 1
-		var lobyte = this.readByte(this._regs[regSP] + STACK_OFFSET);
+		var lobyte = this.readByte(this._regs[regSP] + sO);
 		this._regs[regSP] += 1
-		var hibyte = this.readByte(this._regs[regSP] + STACK_OFFSET);
+		var hibyte = this.readByte(this._regs[regSP] + sO);
 		return (lobyte + (hibyte << 8));
 	}
 

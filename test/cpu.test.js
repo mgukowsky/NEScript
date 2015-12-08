@@ -1765,12 +1765,12 @@ describe("The 6502 CPU", function(){
 			})
 		})
 
-		describe("throws an error when given an illegal opcode", function(){
-			it("reports the illegal opcode", function(){
-				var badOp = cpu.execute.bind(cpu, 0xAB);
-				expect(badOp).toThrowError(/0xab/);
-			})
-		})
+		// describe("throws an error when given an illegal opcode", function(){
+		// 	it("reports the illegal opcode", function(){
+		// 		var badOp = cpu.execute.bind(cpu, 0xAB);
+		// 		expect(badOp).toThrowError(/0xab/);
+		// 	})
+		// })
 	})
 
 	cpu.totalReset();
