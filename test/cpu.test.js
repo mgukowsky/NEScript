@@ -1812,12 +1812,12 @@ describe("The 6502 CPU", function(){
 			expect(cpu.readByte(0x07FF)).toEqual(0xCE);
 			expect(cpu.readByte(0x0000)).toEqual(0xFA);
 
-			cpu.totalReset();
-			cpu.writeWord(0x2007, 0xFACE);
-			expect(cpu.readWord(0x2007)).toEqual(0xFACE);
-			expect(cpu.readWord(0x3007)).toEqual(0xFACE);
-			expect(cpu.readByte(0x2007)).toEqual(0xCE);
-			expect(cpu.readByte(0x2000)).toEqual(0xFA);
+			// cpu.totalReset();
+			// cpu.writeWord(0x2027, 0xFACE);
+			// expect(cpu.readWord(0x2027)).toEqual(0xFACE);
+			// expect(cpu.readWord(0x3027)).toEqual(0xFACE);
+			// expect(cpu.readByte(0x2027)).toEqual(0xCE);
+			// expect(cpu.readByte(0x2020)).toEqual(0xFA);
 		})
 	})
 })

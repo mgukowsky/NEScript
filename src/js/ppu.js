@@ -50,7 +50,11 @@
 
 	var PPU_MONITOR_PROC_MAP = {};
 	PPU_MONITOR_PROC_MAP[PPUCTRL] = checkPPUCTRL;
+	PPU_MONITOR_PROC_MAP[PPUMASK] = checkPPUMASK;
 	PPU_MONITOR_PROC_MAP[OAMDATA] = readOAMDATA;
+	PPU_MONITOR_PROC_MAP[PPUSCROLL] = checkPPUSCROLL;
+	PPU_MONITOR_PROC_MAP[PPUADDR] = checkPPUADDR;
+	PPU_MONITOR_PROC_MAP[PPUDATA] = checkPPUDATA;
 	PPU_MONITOR_PROC_MAP[OAMDMA] = postDMA;
 
 	//The NES color palette, contains RGB values
@@ -127,20 +131,20 @@
 	var SCANLINE_PHASE_PROC_MAP = {};
 
 	//First 256 PPU cycles are used to fetch the data which will be sent out.
-	for(var i = 0; i < 256; i++){
-		SCANLINE_PHASE_PROC_MAP[i] = fetchResolveBlitPixel;
-	}
+	// for(var i = 0; i < 256; i++){
+	// 	SCANLINE_PHASE_PROC_MAP[i] = fetchResolveBlitPixel;
+	// }
 
-	//The 2C02 spends hBlank doing various fetches from memory. Since these are done during
-	//the blitting process, we don't have to do anything during hblank :)
-	for(var i = 256; i < 340; i++){
-		SCANLINE_PHASE_PROC_MAP[i] = hBlankProc;
-	}
+	// //The 2C02 spends hBlank doing various fetches from memory. Since these are done during
+	// //the blitting process, we don't have to do anything during hblank :)
+	// for(var i = 256; i < 340; i++){
+	// 	SCANLINE_PHASE_PROC_MAP[i] = hBlankProc;
+	// }
 
-	//341st is the last for the scanline. On the 2C02 this is a dummy scanline,
-	//but in our case we use this opportunity to reload the sprite workspace, which is similar 
-	//to the actual behavior of the 2C02.
-	SCANLINE_PHASE_PROC_MAP[340] = endHBlank;
+	// //341st is the last for the scanline. On the 2C02 this is a dummy scanline,
+	// //but in our case we use this opportunity to reload the sprite workspace, which is similar 
+	// //to the actual behavior of the 2C02.
+	// SCANLINE_PHASE_PROC_MAP[340] = endHBlank;
 
 /****************************INTERFACE***************************/
 
@@ -154,6 +158,9 @@
 		//We also need a reference to the CPU itself (for posting interrupts)
 		this._CPU = refCPU;
 
+		//Hack for CPU to read palette vals, see CPU#readByte
+		NEScript.__PPU__ = this;
+
 		this.pixelCounter = 0;
 		this.scanlineCounter = 0;
 		this.scanlineOffsetY = 0;
@@ -163,8 +170,42 @@
 			patternTableOffset: 0,
 			spritePatternTableOffset: 0,
 			spriteSizeIs8x8: true,
-			mirroringType: MIRROR_HORIZONTAL
+			mirroringType: MIRROR_HORIZONTAL,
+			vramIncrement: 1,
+			shouldGenerateNMI: false,
+			shouldShowBackground: false,
+			shouldShowSprites: false,
+			shouldShowLeftmostBackground: false,
+			shouldShowLeftmostSprites: false,
+			usePPUSCROLLX: true,
+			usePPUADDRHI: true,
+			fineXOffset: 0,
+			fineYOffset: 0,
+			currentPPUAddress: 0,
+			ppuaddrBuffer: 0
+
 		}
+
+		//Special internal registers to be read by the PPU.
+		//This is the most efficient way for the CPU to respond to 
+		//writes to PPUDATA.
+		// Object.defineProperty(this._mainMemory, 'ppuAddr', {
+		// 	configurable: true,
+		// 	enumerable: false,
+		// 	writeable: true,
+		// 	value: 0
+		// })
+
+		// Object.defineProperty(this._mainMemory, 'ppuIncr', {
+		// 	configurable: true,
+		// 	enumerable: false,
+		// 	writeable: true,
+		// 	value: 1
+		// })
+
+		this._mainMemory.ppuAddr = 0;
+		this._mainMemory.ppuIncr = 1;
+		this._mainMemory.ppudataBuff = 0;
 
 		// this._INTERNALS = {
 		// 	scanlinePhaseCounter: 0,
@@ -218,17 +259,46 @@
 		this._vbuffer = this.ctx.createImageData(this.canvasEl.width, this.canvasEl.height);
 		var vbLimit = this._vbuffer.data.length;
 
+		this._mainMemory.ppuAddr = 0;
+		this._mainMemory.ppuIncr = 1;
+		this._mainMemory.ppudataBuff = 0;
+
 		for(var i = 0; i < vbLimit; i += 4){
 			this._vbuffer.data[i] = 0;
 			this._vbuffer.data[i + 1] = 0;
 			this._vbuffer.data[i + 2] = 0;
 			this._vbuffer.data[i + 3] = 0xFF;
 		}
+
+		this.pixelCounter = 0;
+		this.scanlineCounter = 0;
+		this.scanlineOffsetY = 0;
+
+		this.REGISTERS = {
+			nameTableBaseAddr: 0x2000,
+			patternTableOffset: 0,
+			spritePatternTableOffset: 0,
+			spriteSizeIs8x8: true,
+			mirroringType: MIRROR_HORIZONTAL,
+			vramIncrement: 1,
+			shouldGenerateNMI: false,
+			shouldShowBackground: false,
+			shouldShowSprites: false,
+			shouldShowLeftmostBackground: false,
+			shouldShowLeftmostSprites: false,
+			usePPUSCROLLX: true,
+			usePPUADDRHI: true,
+			fineXOffset: 0,
+			fineYOffset: 0,
+			currentPPUAddress: 0,
+			ppuaddrBuffer: 0
+
+		}
 	}
 
 	//R/W functions need to coerce any requested address to range $0000 to $3FFF
 	PPU.prototype.readByte = function(addr){
-		addr = coercePPUAddress(addr);
+		addr = coercePPUAddress(addr);		
 		return this._VRAM.readByte(addr);
 	}
 
@@ -642,7 +712,11 @@
 	}
 
 	function executeScanlineTick(){
-		SCANLINE_PHASE_PROC_MAP[this.scanlineCounter].call(this);
+		var tmpPhase = this.scanlineCounter;
+		//SCANLINE_PHASE_PROC_MAP[this.scanlineCounter].call(this);
+		if(this.scanlineCounter < 256){
+			this.fetchResolveBlitPixel();
+		}
 	}
 
 	//The process of rendering a scanline takes 341 PPU cycles. 
@@ -656,7 +730,7 @@
 	//and set the collision flag if necessary, then the pixel is drawn to
 	//the screen.
 
-	function fetchResolveBlitPixel(){
+	PPU.prototype.fetchResolveBlitPixel = function(){
 		var ntPixel = this.getPixelNT();
 		var sprPixel = this.getPixelSPR();
 
@@ -680,7 +754,9 @@
 	//The final tick reloads the sprite workspace, which is similar to the actual behavior of the 
 	//2C02
 	function endHBlank(){
-		//for(var i = 63; )
+		for(var i = 63; i > -1; i--){
+
+		}
 	}
 
 	//After the first 256 ticks, we spend the remaining cycles -1 in hBlank
@@ -737,12 +813,19 @@
 	function beginVBlank(){
 		this.scanlineOffsetY = 0;
 
+		// //Reload sprite workspace
+		// for(var i = SPRITE_LIMIT; i > 0; i--){
+
+		// }
+
+
+	}
+
+	function endVblank(){
 		//Reload sprite workspace
-		for(var i = SPRITE_LIMIT; i > 0; i--){
-
+		for(var i = 63; i > 0; i--){
+			this.blitSprite(i, this.IspriteRAM);
 		}
-
-
 	}
 
 	/************************REGISTER I/O*********************/
@@ -763,11 +846,59 @@
 
 	function checkPPUCTRL(){
 		var ppuctrlVal = this._mainMemory.readByte(PPUCTRL);
+
 		this.REGISTERS.nameTableBaseAddr = resolveNameTableBaseAddr(ppuctrlVal);
 
 		this.REGISTERS.spriteSizeIs8x8 = (ppuctrlVal & 0x20) ? false : true;
 		this.REGISTERS.patternTableOffset = (ppuctrlVal & 0x10) ? 0x1000 : 0;
 		this.REGISTERS.spritePatternTableOffset = (ppuctrlVal & 0x08) ? 0x1000 : 0;
+		this._mainMemory.ppuIncr = (ppuctrlVal & 0x04) ? 32 : 1;
+		this.REGISTERS.shouldGenerateNMI = (ppuctrlVal & 0x80) ? true : false;
+	}
+
+	function checkPPUMASK(){
+		var ppumaskVal = this._mainMemory.readByte(PPUMASK);
+
+		this.REGISTERS.shouldShowLeftmostBackground = (ppumaskVal & 0x02) ? true : false;
+		this.REGISTERS.shouldShowLeftmostSprites = (ppumaskVal & 0x04) ? true : false;
+		this.REGISTERS.shouldShowBackground = (ppumaskVal & 0x08) ? true : false;
+		this.REGISTERS.shouldShowSprites = (ppumaskVal & 0x10) ? true : false;
+	}
+
+	function checkPPUSCROLL(){
+		var ppuscrollVal = this._mainMemory.readByte(PPUSCROLL);
+		var shouldChangeX = this.REGISTERS.usePPUSCROLLX;
+
+		if(shouldChangeX){
+			this.REGISTERS.fineXOffset = ppuscrollVal;
+		} else {
+			this.REGISTERS.fineYOffset = ppuscrollVal;
+		}
+
+		this.REGISTERS.usePPUSCROLLX = !shouldChangeX;
+	}
+
+	function checkPPUADDR(){
+		var ppuaddrVal = this._mainMemory.readByte(PPUADDR);
+		var shouldWriteHI = this.REGISTERS.usePPUADDRHI;
+
+		if(shouldWriteHI){
+			//The masking w/ 0xFF is to clear out the bits in the number hi
+			this._mainMemory.ppuAddr = (this._mainMemory.ppuAddr & 0xFF) | (ppuaddrVal << 8);
+		} else {
+			this._mainMemory.ppuAddr = (this._mainMemory.ppuAddr & 0xFF00) | ppuaddrVal;
+		}
+
+		this.REGISTERS.usePPUADDRHI = !shouldWriteHI;
+	}
+
+	function checkPPUDATA(){
+		var ppuaddrVal = this._mainMemory.ppuAddr;
+		var ppudataVal = this._mainMemory._memory[PPUDATA];
+
+		this.writeByte(ppuaddrVal, ppudataVal);
+
+		this._mainMemory.ppuAddr += this._mainMemory.ppuIncr;
 	}
 
 	function resolveNameTableBaseAddr(value){

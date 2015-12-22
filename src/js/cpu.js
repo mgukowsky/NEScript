@@ -167,7 +167,37 @@
 	//Note that these functions take care of address mirroring
 	CPU.prototype.readByte = function(address){
 		address = _coerceAddress.call(this, address);
-		return this._mainMemory.readByte(address);
+		tmp = this._mainMemory.readByte(address);
+		switch(address){
+			case 0x2002:
+				//Reset bit 7 of PPUSTATUS if it was just read from.
+				//TODO: documentation is unclear if this also resets PPUSCROLL and PPUADDR?			
+				this._mainMemory._memory[0x2002] = tmp & 0x7F;
+				break;
+			case 0x2007:
+				//A write to PPUDATA needs to be handled as a special case
+
+				var coercedAddr = this._mainMemory.ppuAddr & 0x3FFF;
+				var returnVal;
+
+				//Return the data in the VRAM buffer, then update the VRAM buffer
+				if (coercedAddr < 0x3F00){
+					returnVal = this._mainMemory.ppudataBuff;
+					this._mainMemory.ppudataBuff = NEScript.__PPU__.readByte(this._mainMemory.ppuAddr);
+				} else {
+					//The exception is a palette entry, which is returned immediately
+					returnVal = NEScript.__PPU__.readByte(this._mainMemory.ppuAddr);
+					this._mainMemory.ppudataBuff = returnVal;
+				}
+
+				//Increment PPU's VRAM address by 1 or 32 on a write to PPUDATA
+				this._mainMemory.ppuAddr += this._mainMemory.ppuIncr;
+				this._mainMemory.ppuAddr &= 0xFFFF;
+
+				return returnVal;
+				break;
+		}
+		return tmp;
 	}
 
 	CPU.prototype.writeByte = function(address, value){

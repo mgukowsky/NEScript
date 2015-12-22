@@ -296,14 +296,129 @@ describe("The 2C02 PPU", function(){
 			expect(ppu.REGISTERS.patternTableOffset).toEqual(0x1000);
 			expect(ppu.REGISTERS.spritePatternTableOffset).toEqual(0);
 			expect(ppu.REGISTERS.spriteSizeIs8x8).toEqual(true);
+			expect(ppu._mainMemory.ppuIncr).toEqual(1);
+			expect(ppu.REGISTERS.shouldGenerateNMI).toEqual(false);
 
-			cpu.writeByte(0x2000, parseInt("00101000", 2));
+			cpu.writeByte(0x2000, parseInt("10101100", 2));
 			ppu.tick(true);
 
 			expect(ppu.REGISTERS.nameTableBaseAddr).toEqual(0x2000);
 			expect(ppu.REGISTERS.patternTableOffset).toEqual(0);
 			expect(ppu.REGISTERS.spritePatternTableOffset).toEqual(0x1000);
 			expect(ppu.REGISTERS.spriteSizeIs8x8).toEqual(false);
+			expect(ppu._mainMemory.ppuIncr).toEqual(32);
+			expect(ppu.REGISTERS.shouldGenerateNMI).toEqual(true);
+		});
+
+		it("responds to a write to PPUMASK ($2001)", function(){
+			ppu.totalReset();
+			cpu.totalReset();
+
+			cpu.writeByte(0x2001, parseInt("00001010", 2));
+			ppu.tick(true);
+
+			expect(ppu.REGISTERS.shouldShowBackground).toEqual(true);
+			expect(ppu.REGISTERS.shouldShowSprites).toEqual(false);
+			expect(ppu.REGISTERS.shouldShowLeftmostBackground).toEqual(true);
+			expect(ppu.REGISTERS.shouldShowLeftmostSprites).toEqual(false);
+
+			cpu.writeByte(0x2001, parseInt("00010100", 2));
+			ppu.tick(true);
+
+			expect(ppu.REGISTERS.shouldShowBackground).toEqual(false);
+			expect(ppu.REGISTERS.shouldShowSprites).toEqual(true);
+			expect(ppu.REGISTERS.shouldShowLeftmostBackground).toEqual(false);
+			expect(ppu.REGISTERS.shouldShowLeftmostSprites).toEqual(true);
+		})
+
+		it("responds to a read of PPUSTATUS ($2002) by resetting $2002.7", function(){
+			ppu.totalReset();
+			cpu.totalReset();
+
+			ppu._mainMemory.writeByte(0x2002, parseInt("11111111", 2));
+			cpu.readByte(0x2002);
+			expect(ppu._mainMemory.readByte(0x2002)).toEqual(parseInt("01111111", 2));
+
+		})
+
+		it("responds to a pair of writes to PPUSCROLL ($2005)", function(){
+			ppu.totalReset();
+			cpu.totalReset();
+
+			//first write is to x offset, second is to y offset
+			cpu.writeByte(0x2005, 0xAB);
+			ppu.tick(true);
+			cpu.writeByte(0x2005, 0xCD);
+			ppu.tick(true);
+
+			expect(ppu.REGISTERS.fineXOffset).toEqual(0xAB);
+			expect(ppu.REGISTERS.fineYOffset).toEqual(0xCD);
+
+			cpu.writeByte(0x2005, 0xEF);
+			ppu.tick(true);
+
+			expect(ppu.REGISTERS.fineXOffset).toEqual(0xEF);
+			expect(ppu.REGISTERS.fineYOffset).toEqual(0xCD);
+		})
+
+		it("responds to a pair of writes to PPUADDR ($2006)", function(){
+			ppu.totalReset();
+			cpu.totalReset();
+
+			//first write is to hi byte, second is to lo byte
+			cpu.writeByte(0x2006, 0x12);
+			ppu.tick(true);
+			cpu.writeByte(0x2006, 0x34);
+			ppu.tick(true);
+
+			expect(ppu._mainMemory.ppuAddr).toEqual(0x1234);
+
+			cpu.writeByte(0x2006, 0x21);
+			ppu.tick(true);
+
+			expect(ppu._mainMemory.ppuAddr).toEqual(0x2134);
+		});
+
+
+		it("responds to a read of PPUDATA, and increments accordingly", function(){
+			ppu.totalReset();
+			cpu.totalReset();
+
+			cpu.writeByte(0x2006, 0x12);
+			ppu.tick(true);
+			cpu.writeByte(0x2006, 0x34);
+			ppu.tick(true);
+			ppu.writeByte(0x1234, 0xAB);
+			ppu.writeByte(0x1235, 0xCD);
+
+			//Emulates a dummy read, then returns the buffered values
+			expect(cpu.readByte(0x2007)).toEqual(0);
+			expect(cpu.readByte(0x2007)).toEqual(0xAB);
+			expect(cpu.readByte(0x2007)).toEqual(0xCD);
+
+			cpu.writeByte(0x2006, 0x3F);
+			ppu.tick(true);
+			cpu.writeByte(0x2006, 0x01);
+			ppu.tick(true);
+			ppu.writeByte(0x3F01, 0x45);
+			//Should return a palette entry immediately
+			expect(cpu.readByte(0x2007)).toEqual(0x45);
+		})
+
+		it("responds to multiple writes to PPUDATA ($2007), properly incrementing the internal address pointer each time", function(){
+			ppu.totalReset();
+			cpu.totalReset();
+
+			cpu.writeByte(0x2006, 0x12);
+			ppu.tick(true);
+			cpu.writeByte(0x2006, 0x34);
+			ppu.tick(true);
+
+			cpu.writeByte(0x2007, 0xAB);
+			ppu.tick(true);
+
+			expect(ppu.readByte(0x1234)).toEqual(0xAB);
+			expect(ppu._mainMemory.ppuAddr).toEqual(0x1235);
 		})
 
 		it("responds to a write to OAMDATA ($2004)", function(){
