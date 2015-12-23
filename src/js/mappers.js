@@ -54,6 +54,10 @@
 			this.RAM.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM._DATA.slice(0x10, 0x4010));
 			this.RAM.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM._DATA.slice(0x4010, 0x8010));
 			this.VRAM.loadBank8KB(0, ROM._DATA.slice(0x8010, 0xA010));
+		} else {
+			this.RAM.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM._DATA.slice(0x10, 0x4010));
+			this.RAM.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM._DATA.slice(0x10, 0x4010));
+			this.VRAM.loadBank8KB(0, ROM._DATA.slice(0x8010, 0xA010));
 		}
 
 		//coerce bool to number -> 0: horizontal mirroring; 1: vertical mirroring

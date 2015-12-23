@@ -1,4 +1,13 @@
 describe("The 2C02 PPU", function(){
+
+	function testFourBytes(buffer, addr, expectedColor, expectedAlpha){
+		for(var i = 0; i < 3; i++){
+			expect(buffer[addr + i]).toEqual(expectedColor);
+		}
+
+		expect(buffer[addr + 3]).toEqual(expectedAlpha);
+	}
+
 	var cpu = new NEScript.CPU();
 	var ppu = new NEScript.PPU(cpu._mainMemory, cpu);
 
@@ -58,14 +67,6 @@ describe("The 2C02 PPU", function(){
 	})
 
 	describe("with video output capability", function(){
-
-		function testFourBytes(buffer, addr, expectedColor, expectedAlpha){
-				for(var i = 0; i < 3; i++){
-					expect(buffer[addr + i]).toEqual(expectedColor);
-				}
-
-				expect(buffer[addr + 3]).toEqual(expectedAlpha);
-			}
 
 		it("writes a single pixel to the video buffer", function(){
 			ppu.blitPixel(20, 20, 1, 2, 3);
@@ -405,7 +406,7 @@ describe("The 2C02 PPU", function(){
 			expect(cpu.readByte(0x2007)).toEqual(0x45);
 		})
 
-		it("responds to multiple writes to PPUDATA ($2007), properly incrementing the internal address pointer each time", function(){
+		it("responds to multiple writes to PPUDATA ($2007) by writing to VRAM and properly incrementing the internal address pointer each time", function(){
 			ppu.totalReset();
 			cpu.totalReset();
 
@@ -419,6 +420,51 @@ describe("The 2C02 PPU", function(){
 
 			expect(ppu.readByte(0x1234)).toEqual(0xAB);
 			expect(ppu._mainMemory.ppuAddr).toEqual(0x1235);
+
+			cpu.writeByte(0x2006, 0x00);
+			ppu.tick(true);
+			cpu.writeByte(0x2006, 0x00);
+			ppu.tick(true);
+
+			cpu.writeByte(0x2007, 0xBC);
+			ppu.tick(true);
+
+			expect(ppu.readByte(0x0000)).toEqual(0xBC);
+		})
+
+		it("blits to the corresponding name table when writing to $2007", function(){
+			cpu.totalReset();
+			ppu.totalReset();
+			for(var i = 0; i < ppu._vbuffer.data.length; i++){
+				ppu._vbuffer.data[i] = 0;
+			}
+
+			ppu.writeByte(0x3F00, 0x00);
+			ppu.writeByte(0x3F01, 0x20);
+			ppu.writeByte(0x3F02, 0x10);
+			ppu.writeByte(0x3F03, 0x00);
+
+			ppu.writeByte(0x2C00, 0xBC);
+
+			ppu.writeByte(16, parseInt("11110000", 2));
+			ppu.writeByte(24, parseInt("11001100", 2));
+
+			ppu.nameTableBaseAddr = 0x2C00;
+
+			cpu.writeByte(0x2006, 0x2C);
+			ppu.tick(true);
+			cpu.writeByte(0x2006, 0x00);
+			ppu.tick(true);
+
+			cpu.writeByte(0x2007, 0x1);
+			ppu.tick(true);
+
+			testFourBytes(ppu.nameTableWorkspaceD.data, 0, 0x75, 0xEF);
+			testFourBytes(ppu.nameTableWorkspaceD.data, 4, 0x75, 0xEF);
+			testFourBytes(ppu.nameTableWorkspaceD.data, 8, 0xFF, 0xEF);
+			testFourBytes(ppu.nameTableWorkspaceD.data, 12, 0xFF, 0xEF);
+			testFourBytes(ppu.nameTableWorkspaceD.data, 16, 0xBC, 0xEF);
+			testFourBytes(ppu.nameTableWorkspaceD.data, 20, 0xBC, 0xEF);
 		})
 
 		it("responds to a write to OAMDATA ($2004)", function(){
@@ -460,6 +506,72 @@ describe("The 2C02 PPU", function(){
 			for(var i = 0; i < 256; i++){
 				expect(ppu._OAM.readByte(i)).toEqual(0xAB);
 			}
+		})
+	})
+
+	ppu.totalReset();
+	cpu.totalReset();
+
+	describe("executes the main rendering path by", function(){
+		it("correctly rendering a scanline", function(){
+			//Set up pattern & nametable
+			for(var i = 0; i < ppu._vbuffer.data.length; i++){
+				ppu._vbuffer.data[i] = 0;
+			}
+
+			ppu.writeByte(0x3F00, 0x00);
+			ppu.writeByte(0x3F01, 0x20);
+			ppu.writeByte(0x3F02, 0x10);
+			ppu.writeByte(0x3F03, 0x00);
+
+			cpu.writeByte(0x2000, 0);
+			ppu.tick(true);
+			ppu.writeByte(0x23C0, 0);
+
+			ppu.writeByte(0, parseInt("11110000", 2));
+			ppu.writeByte(8, parseInt("11001100", 2));
+
+			ppu._OAM.writeByte(0, 255);
+			ppu._OAM.writeByte(1, 0);
+			ppu._OAM.writeByte(2, parseInt("00000000", 2));
+			ppu._OAM.writeByte(3, 0);
+			ppu.REGISTERS.spriteSizeIs8x8 = true;
+
+			//blit nametable entry to internal NT buffer
+			ppu.blitNameTableBackgroundEntry(0, 0, 0x2000, ppu.nameTableWorkspaceA.data);
+		
+			//blit sprite to internal sprite buffer
+			ppu.blitSprite(0, ppu.IspriteRAM);
+
+			ppu.pixelCounter = 0;
+			ppu.scanlineCounter = 1;
+
+			for(var i = 0; i < 342; i++){
+				ppu.tick();
+			}
+
+			expect(ppu.pixelCounter).toEqual(0);
+			expect(ppu.scanlineCounter).toEqual(2);
+
+
+		})
+
+		it("correctly selects a nametable pixel based on offsets and mirroring", function(){
+			ppu.totalReset();
+			cpu.totalReset();
+
+			ppu.nameTableWorkspaceA.data[0] = 0xAB;
+			ppu.nameTableWorkspaceB.data[0] = 0xCD;
+
+			ppu.REGISTERS.fineXOffset = 255;
+			ppu.REGISTERS.mirroringType = 1; //Vertical mirroring
+
+			ppu.pixelCounter = 1;
+			ppu.scanlineCounter = 1;
+
+			var result = ppu.getPixelNT();
+
+			expect(result.r).toEqual(0xCD);
 		})
 	})
 })

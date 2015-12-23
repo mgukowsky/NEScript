@@ -172,6 +172,7 @@
 			case 0x2002:
 				//Reset bit 7 of PPUSTATUS if it was just read from.
 				//TODO: documentation is unclear if this also resets PPUSCROLL and PPUADDR?			
+				//POSSIBLE BUG: some documentation says that a write to $2002 resets ppu.REGISTERS.useADDRHI to true
 				this._mainMemory._memory[0x2002] = tmp & 0x7F;
 				break;
 			case 0x2007:
@@ -237,6 +238,7 @@
 							(this.flagI << 2) |
 							(this.flagD << 3) |
 							(this.flagB << 4) |
+							//0x20							| //Some may need this bit for compatibility
 							(this.flagV << 6) |
 							(this.flagN << 7);
 		return tmp;			
@@ -918,10 +920,10 @@
 
 	//INCremement a memory address by 1
 	function _INC(addr){
-		scratchByte[0] = this.readByte(addr);
-		scratchByte[0] += 1;
-		this.writeByte(addr, scratchByte[0]);
-		__adjustNZ.call(this, scratchByte[0]);
+		var tmp = this.readByte(addr);
+		tmp = (tmp + 1) & 0xFF;
+		this.writeByte(addr, tmp);
+		__adjustNZ.call(this, tmp);
 	}
 
 	//INcrement regX by 1
@@ -1177,7 +1179,7 @@
 	//rules for # of cycles taken
 	function __genericBranch(operand, condition){
 		if(condition){
-			var tmp = this._regPC[regPC] + operand;
+			var tmp = (this._regPC[regPC] + operand) & 0xFFFF;
 			if(didPageCrossOccur(this._regPC[regPC], tmp)){
 				this._regExtraCycles = 2;
 			} else {
@@ -1199,9 +1201,9 @@
 		scratchByte[0] = this._regs[regID];
 		scratchByte[0] -= operand;
 
-		this.flagZ = (this._regs[regID] === operand) ? true : false;
+		this.flagZ = (scratchByte[0] === 0) ? true : false;
 		this.flagN = (scratchByte[0] & 0x80) ? true : false;
-		this.flagC = (operand <= this._regs[regID]) ? true : false;
+		this.flagC = (this._regs[regID] >= operand) ? true : false;
 	}
 
 	//Copy srcReg into dstReg; srcReg does not change.

@@ -173,10 +173,10 @@
 			mirroringType: MIRROR_HORIZONTAL,
 			vramIncrement: 1,
 			shouldGenerateNMI: false,
-			shouldShowBackground: false,
-			shouldShowSprites: false,
-			shouldShowLeftmostBackground: false,
-			shouldShowLeftmostSprites: false,
+			shouldShowBackground: true,
+			shouldShowSprites: true,
+			shouldShowLeftmostBackground: true,
+			shouldShowLeftmostSprites: true,
 			usePPUSCROLLX: true,
 			usePPUADDRHI: true,
 			fineXOffset: 0,
@@ -282,10 +282,10 @@
 			mirroringType: MIRROR_HORIZONTAL,
 			vramIncrement: 1,
 			shouldGenerateNMI: false,
-			shouldShowBackground: false,
-			shouldShowSprites: false,
-			shouldShowLeftmostBackground: false,
-			shouldShowLeftmostSprites: false,
+			shouldShowBackground: true,
+			shouldShowSprites: true,
+			shouldShowLeftmostBackground: true,
+			shouldShowLeftmostSprites: true,
 			usePPUSCROLLX: true,
 			usePPUADDRHI: true,
 			fineXOffset: 0,
@@ -695,26 +695,42 @@
 	}
 
 	function incrementCounters(){
-		this.scanlineCounter++;
-
-		//Check if we go to the next scanline
-		if(this.scanlineCounter >= PIXEL_LIMIT){
-			this.scanlineCounter = 0;
-			this.scanlineOffsetY++;
-
-			//Check if we are going into vBlank
-			if(this.scanlineOffsetY >= SCANLINE_LIMIT){
-				beginVBlank.call(this);
-			}
+		if(this.scanlineCounter > 0 && this.scanlineCounter < 241){
+			executeScanlineTick.call(this);
 		}
 
-		executeScanlineTick.call(this);
+		if(this.pixelCounter > 340){
+			this.pixelCounter = 0;
+			this.scanlineCounter++;
+
+			if(this.scanlineCounter > 261){
+				this.scanlineCounter = 0;
+			} else if(this.scanlineCounter === 0){
+				//draw sprites
+				for(var i = 63; i > -1; i++){
+					this.blitSprite(i, this.IspriteRAM);
+				}
+			} else if (this.scanlineCounter === 1){
+				//Turn off vblank flag
+				this._mainMemory._memory[PPUSTATUS] &= 0x7F;
+			} else if(this.scanlineCounter === 241){
+				if(this.shouldGenerateNMI){
+					this._CPU.postInterrupt(INTERRUPT_NMI);
+				}
+				//Set vblank flag
+				this._mainMemory._memory[PPUSTATUS] |= 0x80;
+				this.presentBuffer();
+			}
+
+		} else {
+			this.pixelCounter++;
+		}
 	}
 
 	function executeScanlineTick(){
-		var tmpPhase = this.scanlineCounter;
+		//var tmpPhase = this.scanlineCounter;
 		//SCANLINE_PHASE_PROC_MAP[this.scanlineCounter].call(this);
-		if(this.scanlineCounter < 256){
+		if(this.pixelCounter < 256){
 			this.fetchResolveBlitPixel();
 		}
 	}
@@ -763,8 +779,83 @@
 	//The actual 2C02 spends these cycles
 
 	PPU.prototype.getPixelNT = function(){
-		//IMPLEMENT
-		return {r: 0, g: 0, b: 0, a: 0};
+		if(!this.REGISTERS.shouldShowBackground){
+			return {r: 0, g: 0, b: 0, a: 0};
+		}
+
+		var ntInfo = getCorrectNT.call(this);
+		var baseIdx = this.cartesianToIdx(ntInfo.x, ntInfo.y);
+		var tmpRAMref = ntInfo.nt;
+		var r = tmpRAMref[baseIdx];
+		var g = tmpRAMref[baseIdx + 1];
+		var b = tmpRAMref[baseIdx + 2];
+		var a = tmpRAMref[baseIdx + 3];
+
+		return {r: r, g: g, b: b, a: a};
+	}
+
+	//Big function inlined for speed
+	function getCorrectNT(){
+		var activeNT = this.REGISTERS.nameTableBaseAddr,
+				result, currentNT,
+				pastXBoundary = (this.pixelCounter + this.REGISTERS.fineXOffset) > 255,
+				pastYBoundary = ((this.scanlineCounter-1) + this.REGISTERS.fineYOffset) > 239,
+
+				currentX = (this.pixelCounter + this.REGISTERS.fineXOffset) & 0xFF,
+				currentY = ((this.scanlineCounter-1) + this.REGISTERS.fineYOffset) & 0xFF,
+
+				nameTableWorkspaceA = this.nameTableWorkspaceA.data,
+				nameTableWorkspaceB = this.nameTableWorkspaceB.data,
+				nameTableWorkspaceC = this.nameTableWorkspaceC.data,
+				nameTableWorkspaceD = this.nameTableWorkspaceD.data;
+
+		//wrap x, extend y
+		if(this.REGISTERS.mirroringType === MIRROR_HORIZONTAL){
+
+			switch(activeNT){
+				case 0x2000:
+					currentNT = (pastYBoundary) ? nameTableWorkspaceC : nameTableWorkspaceA;
+					break;
+
+				case 0x2400:
+					currentNT = (pastYBoundary) ? nameTableWorkspaceC : nameTableWorkspaceA;
+					break;
+
+				case 0x2800:
+					currentNT = (pastYBoundary) ? nameTableWorkspaceA : nameTableWorkspaceC;
+					break;
+
+				case 0x2C00:
+					currentNT = (pastYBoundary) ? nameTableWorkspaceA : nameTableWorkspaceC;
+					break;
+			}
+
+			//extend x, wrap y
+		} else if (this.REGISTERS.mirroringType === MIRROR_VERTICAL) {
+
+			switch(activeNT){
+				case 0x2000:
+					currentNT = (pastXBoundary) ? nameTableWorkspaceB : nameTableWorkspaceA;
+					break;
+
+				case 0x2400:
+					currentNT = (pastXBoundary) ? nameTableWorkspaceA : nameTableWorkspaceB;
+					break;
+
+				case 0x2800:
+					currentNT = (pastXBoundary) ? nameTableWorkspaceB : nameTableWorkspaceA;
+					break;
+
+				case 0x2C00:
+					currentNT = (pastXBoundary) ? nameTableWorkspaceA : nameTableWorkspaceB;
+					break;
+			}
+
+		} else { //TODO: 4 way & no mirroring
+
+		}
+
+		return {x: currentX, y: currentY, nt: currentNT};
 	}
 
 	PPU.prototype.getPixelSPR = function(){
@@ -777,7 +868,11 @@
 		// return {r: r, g: g, b: b, a: a};
 
 		//var baseIdx = cartesianToIdx.call(this, this.scanlineCounter, this.scanlineOffsetY);
-		var baseIdx = this.cartesianToIdx(0, 0);
+		if(!this.REGISTERS.shouldShowSprites){
+			return {r: 0, g: 0, b: 0, a: 0};
+		}
+
+		var baseIdx = this.cartesianToIdx(this.pixelCounter, this.scanlineCounter);
 		var tmpRAMref = this.IspriteRAM;
 		var r = tmpRAMref[baseIdx];
 		var g = tmpRAMref[baseIdx + 1];
@@ -895,10 +990,31 @@
 	function checkPPUDATA(){
 		var ppuaddrVal = this._mainMemory.ppuAddr;
 		var ppudataVal = this._mainMemory._memory[PPUDATA];
+		var currentNT, currentX, currentY;
+
+		currentX = ppuaddrVal & 0x1F;
+		currentY = Math.floor((ppuaddrVal & 0x3FF) / 30);
+
+		switch(this.nameTableBaseAddr){
+			case 0x2000:
+				currentNT = this.nameTableWorkspaceA.data;
+				break;
+			case 0x2400:
+				currentNT = this.nameTableWorkspaceB.data;
+				break;
+			case 0x2800:
+				currentNT = this.nameTableWorkspaceC.data;
+				break;
+			case 0x2C00:
+				currentNT = this.nameTableWorkspaceD.data;
+				break;
+		}
 
 		this.writeByte(ppuaddrVal, ppudataVal);
 
 		this._mainMemory.ppuAddr += this._mainMemory.ppuIncr;
+
+		this.blitNameTableBackgroundEntry(currentX, currentY, ppuaddrVal, currentNT);
 	}
 
 	function resolveNameTableBaseAddr(value){
