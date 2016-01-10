@@ -77,7 +77,7 @@ describe("An emulated NES MMC mapper chip", function(){
 			c.execute(0x8D);
 			m.monitorProc();
 
-			expect(Controller.strobeCounter).toEqual(24);
+			expect(Controller.strobeCounter).toEqual(23);
 		})
 	})
 })

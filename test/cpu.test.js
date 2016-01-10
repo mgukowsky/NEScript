@@ -38,12 +38,12 @@ describe("The 6502 CPU", function(){
 			cpu.totalReset();
 			cpu.flagC = true;
 			cpu.flagN = true;
-			expect(cpu.flagsToP()).toEqual(0x81);
+			expect(cpu.flagsToP()).toEqual(0xA1);
 
 			cpu.totalReset();
 			cpu.flagN = true;
 			cpu.flagV = true;
-			expect(cpu.flagsToP()).toEqual(0xC0);
+			expect(cpu.flagsToP()).toEqual(0xE0);
 		})
 
 		it("can set its flags according to a given byte", function(){
@@ -564,7 +564,7 @@ describe("The 6502 CPU", function(){
 			it("in imlplied mode", function(){
 				cpu.writeWord(0xFFFE, 0xABCD);
 				_opTest(0x00, 7, {PC: 0xABCD, flagI: true, SP: 0xFC})
-				expect(cpu.readByte(0x1FD)).toEqual(0x10);
+				expect(cpu.readByte(0x1FD)).toEqual(0x30);
 				expect(cpu.readWord(0x1FE)).toEqual(2);
 			})
 		})
@@ -999,7 +999,7 @@ describe("The 6502 CPU", function(){
 				cpu._regPC[regPC] = 0xCEAD;
 				cpu.writeWord(0xCEAE, 0xFACE);
 				_opTest(0x20, 6, {PC: 0xFACE});
-				expect(cpu.popWord()).toEqual(0xCEB0);
+				expect(cpu.popWord()).toEqual(0xCEAF);
 			})
 		})
 
@@ -1294,7 +1294,7 @@ describe("The 6502 CPU", function(){
 				cpu.flagN = true;
 				_opTest(0x08, 3, {});
 				//Were the flags combined and pushed correctly?
-				expect(cpu.popByte()).toEqual(0x83);
+				expect(cpu.popByte()).toEqual(0xB3);
 			})
 		})
 

@@ -64,8 +64,10 @@
 
 	/**************************INTERFACE****************************/
 
-	var Controller = NEScript.Controller = function(RAM){
-		this.RAM = RAM;
+	var Controller = NEScript.Controller = function(refBus){
+		this.refBus = refBus;
+
+		this.MM = refBus.MM;
 
 		this.activeStates = {A: false, B: false, SELECT: false, START: false,
 												 UP: false, DOWN: false, LEFT: false, RIGHT: false};
@@ -153,15 +155,20 @@
 	//Aside from listening for key presses, every CPU cycle the controller either 
 	//sends the next strobe signal or does nothing.
 	Controller.prototype.tick = function(){
+		//Listen for a read of the I/O register
+		if(this.refBus.lastMMread === 0x4016){
+			this.shouldStrobe = true;
+		}
+
 		if (this.strobeCounter > 0 && this.shouldStrobe){
 			//Second thisArg is what matters, b/c the function is already bound
 			var tmpStatus = buttonProcMap[this.strobeCounter].call(this, this);
 			//I'm -pretty- sure that it doesn't matter that we're overwriting the other bits ar
 			//$4016, since those are apparently only used by the Zapper
 			if(tmpStatus){
-				this.RAM._memory[0x4016] =  1;
+				this.MM[0x4016] =  1;
 			} else {
-				this.RAM._memory[0x4016] =  0;
+				this.MM[0x4016] =  0;
 			}
 			this.strobeCounter -= 1;
 			this.shouldStrobe = false;

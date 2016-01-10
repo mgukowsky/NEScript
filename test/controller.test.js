@@ -71,26 +71,28 @@ describe("An NES controller", function(){
 		Controller.receiveSignal(1);
 		expect(Controller.strobeCounter).toEqual(0);
 		Controller.receiveSignal(0);
-		expect(Controller.strobeCounter).toEqual(24);
+		expect(Controller.strobeCounter).toEqual(23);
 	})
 
 	//Controller now begins strobe procedure
-
+	//EDIT: This test should be ignored; it assumes that 
+	//$4016/$4017 are updated EVERY instruction, when in
+	//fact they are only updated on a READ of $4016/$4017
 	it("executes strobe procedure", function(){
 		Controller.tick();
 		expect(CPU.readByte(0x4016)).toEqual(1);
 		Controller.tick();
-		expect(CPU.readByte(0x4016)).toEqual(0);
-		expect(Controller.strobeCounter).toEqual(22);
+		expect(CPU.readByte(0x4016)).toEqual(1);
+		expect(Controller.strobeCounter).toEqual(23);
 		Controller.tick();
 		Controller.tick();
 		Controller.tick();
 		Controller.tick();
 		expect(CPU.readByte(0x4016)).toEqual(1);
 		Controller.tick();
-		expect(CPU.readByte(0x4016)).toEqual(0);
+		expect(CPU.readByte(0x4016)).toEqual(1);
 		Controller.tick();
-		expect(CPU.readByte(0x4016)).toEqual(0);
+		expect(CPU.readByte(0x4016)).toEqual(1);
 	})
 
 	it("does not override the last address written to by the CPU when executing strobe", function(){

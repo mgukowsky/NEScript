@@ -70,6 +70,7 @@
 		//0 or 1 where appropriate)
 		this.flagN = false;
 		this.flagV = false;
+		this.flagTrash = true; //Bit 5 in 6502 P register. Not used, but should always be on.
 		this.flagB = false;
 		this.flagD = false;
 		this.flagI = false;
@@ -116,6 +117,7 @@
 		this._mainMemory.reset();
 		this.flagN = false;
 		this.flagV = false;
+		this.flagTrash = true;
 		this.flagB = false;
 		this.flagD = false;
 		this.flagI = false;
@@ -172,11 +174,13 @@
 			case 0x2002:
 				//Reset bit 7 of PPUSTATUS if it was just read from.
 				//TODO: documentation is unclear if this also resets PPUSCROLL and PPUADDR?			
-				//POSSIBLE BUG: some documentation says that a write to $2002 resets ppu.REGISTERS.useADDRHI to true
 				this._mainMemory._memory[0x2002] = tmp & 0x7F;
+				//Reset PPU toggle
+				NEScript.__PPU__.REGISTERS.usePPUADDRHI = true;
+				NEScript.__PPU__.REGISTERS.usePPUSCROLLX = true;
 				break;
 			case 0x2007:
-				//A write to PPUDATA needs to be handled as a special case
+				//A read to PPUDATA needs to be handled as a special case
 
 				var coercedAddr = this._mainMemory.ppuAddr & 0x3FFF;
 				var returnVal;
@@ -191,11 +195,15 @@
 					this._mainMemory.ppudataBuff = returnVal;
 				}
 
-				//Increment PPU's VRAM address by 1 or 32 on a write to PPUDATA
+				//Increment PPU's VRAM address by 1 or 32 on a read to PPUDATA
 				this._mainMemory.ppuAddr += this._mainMemory.ppuIncr;
 				this._mainMemory.ppuAddr &= 0xFFFF;
 
 				return returnVal;
+				break;
+			//Read from $4016 advances controller strobe
+			case 0x4016:
+				NEScript.__Controller__.shouldStrobe = true;
 				break;
 		}
 		return tmp;
@@ -238,7 +246,7 @@
 							(this.flagI << 2) |
 							(this.flagD << 3) |
 							(this.flagB << 4) |
-							//0x20							| //Some may need this bit for compatibility
+							(this.flagTrash << 5) |
 							(this.flagV << 6) |
 							(this.flagN << 7);
 		return tmp;			
@@ -250,6 +258,7 @@
 		this.flagI = (val & 0x4) ? true : false;
 		this.flagD = (val & 0x8) ? true : false;
 		this.flagB = (val & 0x10) ? true : false;
+		this.flagTrash = (val & 20) ? true : false;
 		this.flagV = (val & 0x40) ? true : false;
 		this.flagN = (val & 0x80) ? true : false;
 	}
@@ -549,6 +558,7 @@
 		var dataToSend = this.readByte(this.DMAAddress);
 		this.DMADestination.writeByte(this.DMACounter, dataToSend);
 
+		this.DMAAddress++;
 		this.DMACounter++;
 
 		return 2;
@@ -740,7 +750,10 @@
 	//regA + memoryOperand + carry flag -> regA
 	function _ADC(operand){
 		var result = operand + this._regs[regA] + this.flagC;
+		
 		this.flagC = (result > 0xFF) ? true : false;
+
+		result &= 0xFF;
 
 		//Set the overflow flag when we add two numbers (each < 128), but the result > 127;
 		//checks if pos + pos = neg OR neg + neg = pos
@@ -946,7 +959,7 @@
 
 	//Unconditional Jump and Save Return address (alternately, Jump to SubRoutine)
 	function _JSR(addr){
-		this.pushWord(this._regPC[regPC]);
+		this.pushWord(this._regPC[regPC] - 1);
 		this._regPC[regPC] = addr;
 	}
 
@@ -1012,7 +1025,10 @@
 
 	//PusH regP (flags)
 	function _PHP(){
-		this.pushByte(this.flagsToP());
+		//The documentation for this is obscure, but the 6502 DOES set the 
+		//B flag (bit 4 of P register) BEFORE pushing the flags. It is also expected
+		//that bit 5 (an unused flag) will be unaffected.
+		this.pushByte(this.flagsToP() | 0x30);
 	}
 
 	//Pop (aka PulL) from stack, place into regA
@@ -1025,7 +1041,7 @@
 
 	//Pop (aka PulL) from stack, place into flags
 	function _PLP(){
-		this.pToFlags(this.popByte());
+		this.pToFlags(this.popByte() & 0xEF);
 	}
 
 	//ROtate regA or memory Left
@@ -1044,6 +1060,7 @@
 			tmp = this.readByte(addr);
 			bitShiftedOff = tmp & 0x80;
 			tmp <<= 1;
+			tmp |= this.flagC;
 			this.writeByte(addr, tmp);
 		}
 
@@ -1059,12 +1076,13 @@
 		if (this._regCurrentAddressingMode === ACCUMULATOR){
 			bitShiftedOff = addr & 0x01;
 			tmp = addr >> 1;
-			tmp = (this.flagC) ? tmp | 0x80 : tmp;
+			tmp = (this.flagC) ? (tmp | 0x80) : tmp;
 			this._regs[regA] = tmp;
 		} else {
 			tmp = this.readByte(addr);
 			bitShiftedOff = tmp & 0x01;
 			tmp >>= 1;
+			tmp = (this.flagC) ? (tmp | 0x80) : tmp;
 			this.writeByte(addr, tmp);
 		}
 
@@ -1086,7 +1104,7 @@
 	//was pushed), then put it into regPC.
 	//Flags are NOT affected!
 	function _RTS(){
-		this._regPC[regPC] = this.popWord();
+		this._regPC[regPC] = this.popWord() + 1;
 	}
 
 	//SuBtract with Carry
@@ -1102,10 +1120,14 @@
 	function _SBC(operand){
 		var result = this._regs[regA] - operand - (!this.flagC);
 
+		this.flagC = (result >= 0) ? true : false;
+
+		result &= 0xFF;
+
 		//See ADC for overflow explanation
 		//Set overflow if pos - neg = neg OR neg - pos = pos
 		this.flagV = (((this._regs[regA] ^ operand) & 0x80) && ((this._regs[regA] ^ result) & 0x80)) ? true : false
-		this.flagC = (result >= 0) ? true : false;
+		
 		this._regs[regA] = result;
 		__adjustNZ.call(this, this._regs[regA]);
 	}
@@ -1332,7 +1354,10 @@
 	function indirectIndexedXOperand(){
 		var indirectAddr = this.readByte(this._regPC[regPC] + 1) + this._regs[regX];
 		indirectAddr = indirectAddr & 0xFF;
-		var memAddr = this.readWord(indirectAddr);
+		//var memAddr = this.readWord(indirectAddr);
+		var memAddrLo = this.readByte(indirectAddr);
+		var memAddrHi = this.readByte((indirectAddr + 1) & 0xFF);
+		var memAddr = memAddrLo + (memAddrHi << 8);
 		this._regPC[regPC] += 2;
 		return this.readByte(memAddr);
 	}
@@ -1344,7 +1369,9 @@
 	//adding the Y register.
 	function indirectIndexedYOperand(){
 		var indirectAddr = this.readByte(this._regPC[regPC] + 1);
-		var baseAddr = this.readWord(indirectAddr);
+		var baseAddrLo = this.readByte(indirectAddr);
+		var baseAddrHi = this.readByte((indirectAddr + 1) & 0xFF);
+		var baseAddr = baseAddrLo + (baseAddrHi << 8);
 		var memAddr = baseAddr + this._regs[regY];
 		if (didPageCrossOccur(baseAddr, memAddr)){
 			this._regExtraCycles = 1;
@@ -1424,14 +1451,18 @@
 	function indirectIndexedXAddr(){
 		var indirectAddr = this.readByte(this._regPC[regPC] + 1) + this._regs[regX];
 		indirectAddr = indirectAddr & 0xFF;
-		var memAddr = this.readWord(indirectAddr);
+		var memAddrLo = this.readByte(indirectAddr);
+		var memAddrHi = this.readByte((indirectAddr + 1) & 0xFF);
+		var memAddr = memAddrLo + (memAddrHi << 8);
 		this._regPC[regPC] += 2;
 		return memAddr;
 	}
 
 	function indirectIndexedYAddr(){
 		var indirectAddr = this.readByte(this._regPC[regPC] + 1);
-		var baseAddr = this.readWord(indirectAddr);
+		var baseAddrLo = this.readByte(indirectAddr);
+		var baseAddrHi = this.readByte((indirectAddr + 1) & 0xFF);
+		var baseAddr = baseAddrLo + (baseAddrHi << 8);
 		var memAddr = baseAddr + this._regs[regY];
 		if (didPageCrossOccur(baseAddr, memAddr)){
 			this._regExtraCycles = 1;

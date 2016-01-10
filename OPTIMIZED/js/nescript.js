@@ -11,10 +11,13 @@
 
 	/******************************INTERFACE*********************************/
 	var Emulator = NEScript.Emulator = function(){
-		this.CPU = new NEScript.CPU();
-		this.PPU = new NEScript.PPU(this.CPU._mainMemory, this.CPU);
-		this.Controller = new NEScript.Controller(this.CPU._mainMemory);
-		this.Mapper = new NEScript.Mapper(this.CPU._mainMemory, this.PPU._VRAM, this.Controller, this.PPU);
+		var Bus = this.Bus = new NEScript.Bus();
+		this.CPU = new NEScript.CPU(Bus);
+		this.PPU = new NEScript.PPU(Bus);
+		this.Controller = new NEScript.Controller(Bus);
+		this.Mapper = new NEScript.Mapper(Bus);
+
+		Bus.connect(this.CPU, this.PPU, this.Controller, this.Mapper);
 	}
 
 	//Should be invoked after the user loads a *.nes file into the browser.
@@ -28,7 +31,7 @@
 		this.PPU.REGISTERS.mirroringType = this.Mapper.LOADED_MIRROR_TYPE;
 
 		//Point PC to the appropriate address
-		this.CPU._regPC[0] = this.CPU.readWord(NEScript.VECTOR_RESET);
+		this.CPU.regPC = this.CPU.MM[NEScript.VECTOR_RESET] | ((this.CPU.MM[NEScript.VECTOR_RESET+1]) << 8);
 		simpleLoop.call(this);
 
 		// this.CPU._regPC[0] = 0xC000;

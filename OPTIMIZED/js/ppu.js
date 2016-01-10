@@ -48,15 +48,6 @@
 
 	var BITMASKS = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
 
-	var PPU_MONITOR_PROC_MAP = {};
-	PPU_MONITOR_PROC_MAP[PPUCTRL] = checkPPUCTRL;
-	PPU_MONITOR_PROC_MAP[PPUMASK] = checkPPUMASK;
-	PPU_MONITOR_PROC_MAP[OAMDATA] = readOAMDATA;
-	PPU_MONITOR_PROC_MAP[PPUSCROLL] = checkPPUSCROLL;
-	PPU_MONITOR_PROC_MAP[PPUADDR] = checkPPUADDR;
-	PPU_MONITOR_PROC_MAP[PPUDATA] = checkPPUDATA;
-	PPU_MONITOR_PROC_MAP[OAMDMA] = postDMA;
-
 	//The NES color palette, contains RGB values
 	var _NES_COLOR_PALETTE = {
 		0x00: {r: 0x75, g: 0x75, b: 0x75}, //dark gray
@@ -148,15 +139,15 @@
 
 /****************************INTERFACE***************************/
 
-	var PPU = NEScript.PPU = function(refMainMemory, refCPU){
-		this._VRAM = new NEScript.RAM(0x4000);
-		this._OAM = new NEScript.RAM(0x100);
+	var PPU = NEScript.PPU = function(refBus){
+		this.refBus = refBus;
+		this.VM = refBus.VM;
+		this.OAM = refBus.OAM;
 
 		//Reference to a CPU's main memory
-		this._mainMemory = refMainMemory;
+		this.MM = refBus.MM;
 
 		//We also need a reference to the CPU itself (for posting interrupts)
-		this._CPU = refCPU;
 
 		//Hack for CPU to read palette vals, see CPU#readByte
 		NEScript.__PPU__ = this;
@@ -203,9 +194,9 @@
 		// 	value: 1
 		// })
 
-		this._mainMemory.ppuAddr = 0;
-		this._mainMemory.ppuIncr = 1;
-		this._mainMemory.ppudataBuff = 0;
+		this.REGISTERS.ppuAddr = 0;
+		this.REGISTERS.ppuIncr = 1;
+		this.REGISTERS.ppudataBuff = 0;
 
 		// this._INTERNALS = {
 		// 	scanlinePhaseCounter: 0,
@@ -254,14 +245,10 @@
 
 	//Does NOT affect this._mainMemory, this.canvasEl, or this.ctx
 	PPU.prototype.totalReset = function(){
-		this._VRAM = new NEScript.RAM(0x4000);
-		this._OAM = new NEScript.RAM(0x100);
+		this.VM = new NEScript.RAM(0x4000);
+		this.OAM = new NEScript.RAM(0x100);
 		this._vbuffer = this.ctx.createImageData(this.canvasEl.width, this.canvasEl.height);
 		var vbLimit = this._vbuffer.data.length;
-
-		this._mainMemory.ppuAddr = 0;
-		this._mainMemory.ppuIncr = 1;
-		this._mainMemory.ppudataBuff = 0;
 
 		for(var i = 0; i < vbLimit; i += 4){
 			this._vbuffer.data[i] = 0;
@@ -294,17 +281,21 @@
 			ppuaddrBuffer: 0
 
 		}
+
+		this.REGISTERS.ppuAddr = 0;
+		this.REGISTERS.ppuIncr = 1;
+		this.REGISTERS.ppudataBuff = 0;
 	}
 
 	//R/W functions need to coerce any requested address to range $0000 to $3FFF
 	PPU.prototype.readByte = function(addr){
 		addr = coercePPUAddress(addr);		
-		return this._VRAM.readByte(addr);
+		return this.VM[addr];
 	}
 
 	PPU.prototype.writeByte = function(addr, val){
 		addr = coercePPUAddress(addr);
-		this._VRAM.writeByte(addr, val);
+		this.VM[addr] = val;
 	}
 
 	//Need extra logic to wrap a word at $3FFF
@@ -315,21 +306,21 @@
 	PPU.prototype.readWord = function(addr){
 		var coercedAddr = addr % 0x4000;
 		if(coercedAddr === 0x3FFF){
-			var lobyte = this._VRAM.readByte(coercedAddr);
-			var hibyte = this._VRAM.readByte(0);
+			var lobyte = this.VM.readByte(coercedAddr);
+			var hibyte = this.VM.readByte(0);
 			return lobyte + (hibyte << 8); 
 		} else {
-			return this._VRAM.readWord(coercedAddr);
+			return this.VM.readWord(coercedAddr);
 		}
 	}
 
 	PPU.prototype.writeWord = function(addr, val){
 		var coercedAddr = addr % 0x4000;
 		if(coercedAddr === 0x3FFF){
-			this._VRAM.writeByte(coercedAddr, val & 0xFF);
-			this._VRAM.writeByte(0, (val & 0xFF00) >> 8);
+			this.VM.writeByte(coercedAddr, val & 0xFF);
+			this.VM.writeByte(0, (val & 0xFF00) >> 8);
 		} else {
-			this._VRAM.writeWord(coercedAddr, val);
+			this.VM.writeWord(coercedAddr, val);
 		}
 	}
 
@@ -440,20 +431,20 @@
 	//@spriteID - ID of 4-byte sprite info in OAM, range 0 to 63
 	PPU.prototype.blitSprite = function(spriteID, destination){
 		var spriteAddr = spriteID * 4;
-		var xPos = this._OAM.readByte(spriteAddr + 3);
+		var xPos = this.OAM[spriteAddr + 3];
 		//Sprite Y is stored minus 1
-		var yPos = (this._OAM.readByte(spriteAddr) + 1) & 0xFF;
+		var yPos = (this.OAM[spriteAddr] + 1) & 0xFF;
 		//Get absolute address of tile in VRAM
 		if(this.REGISTERS.spriteSizeIs8x8){
-			var tileAddr = (this._OAM.readByte(spriteAddr + 1) * 16) + this.REGISTERS.spritePatternTableOffset;
+			var tileAddr = (this.OAM[spriteAddr + 1] * 16) + this.REGISTERS.spritePatternTableOffset;
 		} else {
-			var rawTileAddr = this._OAM.readByte(spriteAddr + 1);
+			var rawTileAddr = this.OAM[spriteAddr + 1];
 			//Even address means use pattern table at $1000
 			var tmpOffset = (rawTileAddr & 0x01) ? 0x1000 : 0;
 			var tileAddr = (((rawTileAddr & 0xFE) >> 1) * 16) + tmpOffset;
 		}
 
-		var spriteAttrs = this._OAM.readByte(spriteAddr + 2);
+		var spriteAttrs = this.OAM[spriteAddr + 2];
 
 		var paletteID = spriteAttrs & 0x03;
 		var paletteBaseAddr = baseSpritePaletteAddrMap[paletteID];
@@ -715,13 +706,13 @@
 				}
 			} else if (this.scanlineCounter === 1){
 				//Turn off vblank flag
-				this._mainMemory._memory[PPUSTATUS] &= 0x7F;
+				this.MM[PPUSTATUS] &= 0x7F;
 			} else if(this.scanlineCounter === 241){
 				if(this.REGISTERS.shouldGenerateNMI){
-					this._CPU.postInterrupt(INTERRUPT_NMI);
+					this.refBus.CPU.postInterrupt(INTERRUPT_NMI);
 				}
 				//Set vblank flag
-				this._mainMemory._memory[PPUSTATUS] |= 0x80;
+				this.MM[PPUSTATUS] |= 0x80;
 				/*************/
 				this.blitNameTable();
 				for(var i = 63; i > -1; i--){
@@ -907,7 +898,7 @@
 	}
 
 	function handleSpriteCollision(ntPixel, sprPixel){
-		this._mainMemory._memory[PPUSTATUS] |= 0x40;
+		this.MM[PPUSTATUS] |= 0x40;
 		if(sprPixel.a === IS_SPRITE_ZERO){
 			return sprPixel;
 		} else {
@@ -935,33 +926,103 @@
 
 	/************************REGISTER I/O*********************/
 
+	
+
 	//Listens for writes to specific addresses. Should be checked at the 
 	//start of each tick.
 	function ppuMonitorProc(){
-		var tmpProc = PPU_MONITOR_PROC_MAP[this._mainMemory.lastWrite]
-		if(tmpProc){
-			tmpProc.call(this);
+		// var tmpProc = PPU_MONITOR_PROC_MAP[this.refBus.lastMMwrite]
+		// if(tmpProc){
+		// 	tmpProc.call(this);
+		// }
+
+		var r = this.refBus.lastMMread;
+		var w = this.refBus.lastMMwrite;
+
+		var cr = r & 0xF000;
+		var cw = w & 0xF000;
+
+		if((cr === 0x2000)){
+			switch(r){
+				case 0x2002:
+					//Reset bit 7 of PPUSTATUS if it was just read from.
+					//TODO: documentation is unclear if this also resets PPUSCROLL and PPUADDR?			
+					this.MM[0x2002] = this.MM[0x2002] & 0x7F;
+					//Reset PPU toggle
+					this.REGISTERS.usePPUADDRHI = true;
+					this.REGISTERS.usePPUSCROLLX = true;
+					break;
+
+				case 0x2007:
+					//A read to PPUDATA needs to be handled as a special case
+
+					var coercedAddr = this.REGISTERS.ppuAddr & 0x3FFF;
+					var returnVal;
+
+					//Return the data in the VRAM buffer, then update the VRAM buffer
+					if (coercedAddr < 0x3F00){
+						returnVal = this.REGISTERS.ppudataBuff;
+						this.REGISTERS.ppudataBuff = this.readByte(this.REGISTERS.ppuAddr);
+					} else {
+						//The exception is a palette entry, which is returned immediately
+						returnVal = this.readByte(this.REGISTERS.ppuAddr);
+						this.REGISTERS.ppudataBuff = returnVal;
+					}
+
+					//Increment PPU's VRAM address by 1 or 32 on a read to PPUDATA
+					this.REGISTERS.ppuAddr += this.REGISTERS.ppuIncr;
+					this.REGISTERS.ppuAddr &= 0xFFFF;
+
+					return returnVal;
+					break;
+			}
+		}
+
+		if((cw === 0x2000) || (cw === 0x4000)){
+			switch(w){
+				case PPUCTRL: 
+					this.checkPPUCTRL();
+					break;
+				case PPUMASK:
+					this.checkPPUMASK();
+					break;
+				case OAMDATA:
+					this.readOAMDATA();
+					break;
+				case PPUSCROLL:
+					this.checkPPUSCROLL();
+					break;
+				case PPUADDR:
+					this.checkPPUADDR();
+					break;
+				case PPUDATA:
+					this.checkPPUDATA();
+					break;
+				case OAMDMA:
+					this.postDMA();
+					break;
+			}
 		}
 
 		//Make sure we do not erroneously respond to it again next cycle; take value off the"bus"
-		this._mainMemory.lastWrite = null;
-		this._mainMemory.lastRead = null;
+		this.refBus.lastMMwrite = null;
+		this.refBus.lastMMread = null;
 	}
 
-	function checkPPUCTRL(){
-		var ppuctrlVal = this._mainMemory.readByte(PPUCTRL);
+	PPU.prototype.checkPPUCTRL = function(){
+		var ppuctrlVal = this.MM[PPUCTRL];
 
 		this.REGISTERS.nameTableBaseAddr = resolveNameTableBaseAddr(ppuctrlVal);
 
 		this.REGISTERS.spriteSizeIs8x8 = (ppuctrlVal & 0x20) ? false : true;
 		this.REGISTERS.patternTableOffset = (ppuctrlVal & 0x10) ? 0x1000 : 0;
 		this.REGISTERS.spritePatternTableOffset = (ppuctrlVal & 0x08) ? 0x1000 : 0;
-		this._mainMemory.ppuIncr = (ppuctrlVal & 0x04) ? 32 : 1;
+		this.REGISTERS.ppuIncr = (ppuctrlVal & 0x04) ? 32 : 1;
 		this.REGISTERS.shouldGenerateNMI = (ppuctrlVal & 0x80) ? true : false;
 	}
 
-	function checkPPUMASK(){
-		var ppumaskVal = this._mainMemory.readByte(PPUMASK);
+	PPU.prototype.checkPPUMASK = function(){
+		var ppumaskVal = this.MM[PPUMASK];
 
 		this.REGISTERS.shouldShowLeftmostBackground = (ppumaskVal & 0x02) ? true : false;
 		this.REGISTERS.shouldShowLeftmostSprites = (ppumaskVal & 0x04) ? true : false;
@@ -969,8 +1030,8 @@
 		this.REGISTERS.shouldShowSprites = (ppumaskVal & 0x10) ? true : false;
 	}
 
-	function checkPPUSCROLL(){
-		var ppuscrollVal = this._mainMemory.readByte(PPUSCROLL);
+	PPU.prototype.checkPPUSCROLL = function(){
+		var ppuscrollVal = this.MM[PPUSCROLL];
 		var shouldChangeX = this.REGISTERS.usePPUSCROLLX;
 
 		if(shouldChangeX){
@@ -982,24 +1043,24 @@
 		this.REGISTERS.usePPUSCROLLX = !shouldChangeX;
 	}
 
-	function checkPPUADDR(){
-		var ppuaddrVal = this._mainMemory.readByte(PPUADDR);
+	PPU.prototype.checkPPUADDR = function(){
+		var ppuaddrVal = this.MM[PPUADDR];
 		var shouldWriteHI = this.REGISTERS.usePPUADDRHI;
 
 		if(shouldWriteHI){
 			//The masking w/ 0xFF is to clear out the bits in the number hi
-			this._mainMemory.ppuAddr = (this._mainMemory.ppuAddr & 0xFF) | (ppuaddrVal << 8);
+			this.REGISTERS.ppuAddr = (this.REGISTERS.ppuAddr & 0xFF) | (ppuaddrVal << 8);
 		} else {
-			this._mainMemory.ppuAddr = (this._mainMemory.ppuAddr & 0xFF00) | ppuaddrVal;
+			this.REGISTERS.ppuAddr = (this.REGISTERS.ppuAddr & 0xFF00) | ppuaddrVal;
 		}
 
 
 		this.REGISTERS.usePPUADDRHI = !shouldWriteHI;
 	}
 
-	function checkPPUDATA(){
-		var ppuaddrVal = this._mainMemory.ppuAddr;
-		var ppudataVal = this._mainMemory._memory[PPUDATA];
+	PPU.prototype.checkPPUDATA = function(){
+		var ppuaddrVal = this.REGISTERS.ppuAddr;
+		var ppudataVal = this.MM[PPUDATA];
 		var currentNT, currentX, currentY;
 
 		currentX = ppuaddrVal & 0x1F;
@@ -1022,7 +1083,7 @@
 
 		this.writeByte(ppuaddrVal, ppudataVal);
 
-		this._mainMemory.ppuAddr += this._mainMemory.ppuIncr;
+		this.REGISTERS.ppuAddr += this.REGISTERS.ppuIncr;
 
 		this.blitNameTableBackgroundEntry(currentX, currentY, ppuaddrVal, currentNT);
 	}
@@ -1036,17 +1097,16 @@
 
 	var nameTableBaseAddrDict = [0x2000, 0x2400, 0x2800, 0x2C00];
 
-	function readOAMDATA(){
-		var dataToCopy = this._mainMemory.readByte(OAMDATA);
-		var destination = this._mainMemory.readByte(OAMADDR);
-		this._OAM.writeByte(destination, dataToCopy);
-		//Don't use abstraction b/c we do not want to record the write
-		this._mainMemory._memory[OAMADDR] += 1;
+	PPU.prototype.readOAMDATA = function(){
+		var dataToCopy = this.MM[OAMDATA];
+		var destination = this.MM[OAMADDR];
+		this.OAM[destination] = dataToCopy;
+		this.MM[OAMADDR] += 1;
 	}
 
-	function postDMA(){
-		var dmaStartAddr = this._mainMemory.readByte(OAMDMA) * 0x100;
-		this._CPU.startDMA(dmaStartAddr, this._OAM);
+	PPU.prototype.postDMA = function(){
+		var dmaStartAddr = this.MM[OAMDMA] * 0x100;
+		this.refBus.CPU.startDMA(dmaStartAddr);
 
 	}
 

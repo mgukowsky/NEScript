@@ -19,11 +19,10 @@
 
 	//@RAM - a reference to a NEScript.CPU's _mainMemory
 	//@VRAM - a reference to a NEScript.PPU's _VRAM
-	var Mapper = NEScript.Mapper = function(RAM, VRAM, Controller, refPPU){
-		this.RAM = RAM;
-		this.VRAM = VRAM;
-		this.Controller = Controller;
-		this.refPPU = refPPU;
+	var Mapper = NEScript.Mapper = function(refBus){
+		this.refBus = refBus;
+		this.RAM = refBus.MM;
+		this.VRAM = refBus.VM;
 
 		this.currentROM = undefined;
 
@@ -49,10 +48,31 @@
 		monitorController.call(this);
 
 		//Don't care if address is <$8000 (bit 15 must be set)
-		if (this.RAM.lastWrite & 0x8000){
+		if (this.refBus.lastMMwrite & 0x8000){
 			//Pass the byte that was written to the mapper
-			var lastByte = this.RAM._memory[this.RAM.lastWrite];
-			this._internalMapperProc(lastByte, this.RAM.lastWrite);
+			var lastByte = this.RAM[this.refBus.lastMMwrite];
+			this._internalMapperProc(lastByte, this.refBus.lastMMwrite);
+		}
+	}
+
+	//0x1000 worth of data
+	Mapper.prototype.loadBank4KB = function(startAddr, data, dst){
+		for(var i = 0; i < 4096; i++){
+			dst[startAddr + i] = data[i];
+		}
+	}
+
+	//0x2000 worth of data
+	Mapper.prototype.loadBank8KB = function(startAddr, data, dst){
+		for(var i = 0; i < 8192; i++){
+			dst[startAddr + i] = data[i];
+		}
+	}
+
+	//0x4000 worth of data
+	Mapper.prototype.loadBank16KB = function(startAddr, data, dst){
+		for(var i = 0; i < 16384; i++){
+			dst[startAddr + i] = data[i];
 		}
 	}
 
@@ -72,13 +92,13 @@
 		//Load 1 bank CHR-ROM into VRAM pattern tables.
 
 		if(ROM.numBanksPRG_ROM === 2){
-			this.RAM.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM._DATA.slice(0x10, 0x4010));
-			this.RAM.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM._DATA.slice(0x4010, 0x8010));
-			this.VRAM.loadBank8KB(0, ROM._DATA.slice(0x8010, 0xA010));
+			this.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM.slice(0x10, 0x4010), this.RAM);
+			this.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM.slice(0x4010, 0x8010), this.RAM);
+			this.loadBank8KB(0, ROM.slice(0x8010, 0xA010), this.VRAM);
 		} else {
-			this.RAM.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM._DATA.slice(0x10, 0x4010));
-			this.RAM.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM._DATA.slice(0x10, 0x4010));
-			this.VRAM.loadBank8KB(0, ROM._DATA.slice(0x8010, 0xA010));
+			this.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM.slice(0x10, 0x4010), this.RAM);
+			this.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM.slice(0x10, 0x4010), this.RAM);
+			this.loadBank8KB(0, ROM.slice(0x8010, 0xA010), this.VRAM);
 		}
 
 		//coerce bool to number -> 0: horizontal mirroring; 1: vertical mirroring
@@ -92,15 +112,15 @@
 		var finalBankOffset = (0x4000 * (ROM.numBanksPRG_ROM - 1)) + 0x10;
 
 		//On reset, load PRG bank 0 into $8000, and the last is loaded into $C000.
-		this.RAM.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM._DATA.slice(0x10, 0x4010));
-		this.RAM.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM._DATA.slice(finalBankOffset, finalBankOffset + 0x4000))
+		this.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM.slice(0x10, 0x4010), this.RAM);
+		this.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM.slice(finalBankOffset, finalBankOffset + 0x4000), this.RAM);
 	
 		//Docs suggest that CHR is left blank on reset/power on, but here we'll
 		//opt to load in the first CHR bank into the pattern tables
 
 		//TODO: figure out CHR-RAM stuff (i.e. this condition is false)
 		if(ROM.numBanksCHR_ROM > 0){
-			this.VRAM.loadBank8KB(0, ROM._DATA.slice(finalBankOffset + 0x4000, finalBankOffset + 0x6000));
+			this.loadBank8KB(0, ROM.slice(finalBankOffset + 0x4000, finalBankOffset + 0x6000), this.VRAM);
 		}
 
 		//internal vars for this mapper
@@ -158,12 +178,11 @@
 				//isolate address bits 13 and 14 to determine register
 
 				regSelect = (lastWrite & (0x6000)) >> 0xD;
-				//debugger
 
 				switch(regSelect){
 					case 0: //$8000 - $9FFF
 						//In reality there are more mirroring types than this controls
-						this.refPPU.REGISTERS.mirroringType = (this._workspace.regShift & 1) ? 0 : 1;
+						this.refBus.PPU.REGISTERS.mirroringType = (this._workspace.regShift & 1) ? 0 : 1;
 						
 						if(!(this._workspace.regShift & 0x8)){
 							this._workspace.PrgSizeIs32KB = true;
@@ -207,16 +226,16 @@
 					prgLoOffset = (0x4000 * tmpPrg) + 0x10;
 					prgHiOffset = (0x4000 * (tmpPrg+1)) + 0x10;
 
-					this.RAM.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM._DATA.slice(prgLoOffset, prgLoOffset + 0x4000));
-					this.RAM.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM._DATA.slice(prgHiOffset, prgHiOffset + 0x4000));
+					this.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM.slice(prgLoOffset, prgLoOffset + 0x4000), this.RAM);
+					this.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM.slice(prgHiOffset, prgHiOffset + 0x4000), this.RAM);
 				} else {
 					tmpPrg = this._workspace.PrgSelect;
 					prgLoOffset = (0x4000 * tmpPrg) + 0x10;
 					
 					if(this._workspace.shouldSwapLoPrg){
-						this.RAM.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM._DATA.slice(prgLoOffset, prgLoOffset + 0x4000));
+						this.loadBank16KB(ADDR_PRG_ROM_LOWER_BANK, ROM.slice(prgLoOffset, prgLoOffset + 0x4000), this.RAM);
 					} else {
-						this.RAM.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM._DATA.slice(prgLoOffset, prgLoOffset + 0x4000));
+						this.loadBank16KB(ADDR_PRG_ROM_UPPER_BANK, ROM.slice(prgLoOffset, prgLoOffset + 0x4000), this.RAM);
 					}
 				}
 
@@ -224,7 +243,7 @@
 					if(this._workspace.shouldSwitchChr8kb){
 						tmpChr = this._workspace.ChrLoSelect & 0xFE
 						chrLoOffset = (0x4000 * tmpChr) + this._workspace.finalPrgBankOffset + 0x8000;
-						this.VRAM.loadBank8KB(0, ROM._DATA.slice(chrLoOffset, chrLoOffset + 0x2000))
+						this.loadBank8KB(0, ROM.slice(chrLoOffset, chrLoOffset + 0x2000), this.VRAM);
 					} else {
 						tmpChr = this._workspace.ChrLoSelect;
 						tmpChrHi = this._workspace.ChrHiSelect;
@@ -232,8 +251,8 @@
 						chrLoOffset = (0x4000 * tmpChr) + this._workspace.finalPrgBankOffset + 0x4000;
 						chrHiOffset = (0x4000 * tmpChrHi) + this._workspace.finalPrgBankOffset + 0x4000;
 
-						this.VRAM.loadBank4KB(0, ROM._DATA.slice(chrLoOffset, chrLoOffset + 0x1000))
-						this.VRAM.loadBank4KB(0x1000, ROM._DATA.slice(chrHiOffset, chrHiOffset + 0x1000))
+						this.loadBank4KB(0, ROM.slice(chrLoOffset, chrLoOffset + 0x1000), this.VRAM);
+						this.loadBank4KB(0x1000, ROM.slice(chrHiOffset, chrHiOffset + 0x1000), this.VRAM);
 					}
 				}
 
@@ -245,15 +264,15 @@
 	}
 
 	function monitorController(){
-		if(this.RAM.lastWrite === 0x4016){
-			this.Controller.receiveSignal(this.RAM._memory[0x4016]); //Don't use utility functions b/c we don't want to record the read
+		if(this.refBus.lastMMwrite === 0x4016){
+			this.refBus.Controller.receiveSignal(this.RAM[0x4016]); //Don't use utility functions b/c we don't want to record the read
 		
 			//Reset the lastWrite (and lastRead), otherwise the value will stay on the "bus" too long;
 			//i.e. Write a 1 to $4016, but the next instruction does not write to memory 
 			//at all. Mapper would erroneously interpret this as two subsequent writes of 1
 			//to $4016, which would mean that writing a 0 to $4016 next would NOT trigger controller 
 			//strobe. But otherwise we leave it INTACT for the PPU
-			this.RAM.lastWrite = null;
+			this.refBus.lastMMwrite = null;
 			//this.RAM.lastRead = null;
 		}
 
