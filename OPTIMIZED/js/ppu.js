@@ -248,8 +248,6 @@
 
 	//Does NOT affect this._mainMemory, this.canvasEl, or this.ctx
 	PPU.prototype.totalReset = function(){
-		this.VM = new NEScript.RAM(0x4000);
-		this.OAM = new NEScript.RAM(0x100);
 		this._vbuffer = this.ctx.createImageData(this.canvasEl.width, this.canvasEl.height);
 		var vbLimit = this._vbuffer.data.length;
 
