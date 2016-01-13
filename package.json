@@ -1,0 +1,26 @@
+{
+  "name": "NEScript",
+  "version": "1.0.0",
+  "description": "NES emulator in JavaScript",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "karma start karma.conf.js --browsers Chrome",
+    "testall": "karma start karma.conf.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "jasmine-core": "^2.3.4",
+    "karma": "^0.13.14",
+    "karma-chrome-launcher": "^0.2.1",
+    "karma-firefox-launcher": "^0.1.7",
+    "karma-ie-launcher": "^0.2.0",
+    "karma-jasmine": "^0.3.6",
+    "karma-mocha-reporter": "^1.1.1",
+    "karma-opera-launcher": "^0.3.0",
+    "karma-spec-reporter": "0.0.21"
+  }
+}

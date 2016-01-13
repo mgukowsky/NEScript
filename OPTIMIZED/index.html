@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>NEScript</title>
+	<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+	<h1>NEScript</h1>
+	<canvas id="canvas"></canvas>
+	<label>
+		Open a ROM from your computer:
+		<input id="open-local-rom" type="file" accept=".nes">
+	</label>
+	<section id="controls-info">
+		<h2>CONTROLS:</h2>
+		<p>UP, DOWN, LEFT, RIGHT: arrow keys</p>
+		<p>A BUTTON: X key</p>
+		<p>B BUTTON: Z key</p>
+		<p>START: S key</p>
+		<p>SELECT: A key</p>
+	</section>
+	<br/>
+	<p>NOTE: the default loaded program (color_test.nes) is an open source ROM retrieved from http://forums.nesdev.com/viewtopic.php?f=3&amp;t=13264, by rainwarrior</p>
+	<br/>
+	<p>Font "Press Start" retrieved from http://www.dafont.com/press-start.font, by Codeman38</p>
+	<script type="text/javascript" src="js/bus.js"></script>
+	<script type="text/javascript" src="js/cpu.js"></script>
+	<script type="text/javascript" src="js/ppu.js"></script>
+	<script type="text/javascript" src="js/rom.js"></script>
+	<script type="text/javascript" src="js/controller.js"></script>
+	<script type="text/javascript" src="js/mappers.js"></script>
+	<script type="text/javascript" src="js/nescript.js"></script>
+	<script type="text/javascript">
+		var EMULATOR = new NEScript.Emulator();
+
+		document.getElementById("open-local-rom").addEventListener("change", openROM);
+
+		function openROM(event){
+			EMULATOR.ejectROM();
+
+			event.stopPropagation
+			event.preventDefault();
+
+			var f = new FileReader()
+			f.onload = function(eventData){ //File contents will be in f.result, NOT the event object
+				var rawData = new Uint8Array(f.result);
+				EMULATOR.startROM(rawData);
+			}
+
+			f.readAsArrayBuffer(event.target.files[0])
+		}
+
+		var oReq = new XMLHttpRequest();
+		oReq.open("GET", "assets/color_test.nes", true);
+		oReq.responseType = "arraybuffer";
+
+		oReq.onload = function (oEvent) {
+		  var arrayBuffer = oReq.response;
+		  if (arrayBuffer) {
+		    var byteArray = new Uint8Array(arrayBuffer);
+		    EMULATOR.startROM(byteArray);
+		  }
+		};
+
+		oReq.send(null);
+	</script>
+</body>
+</html>
