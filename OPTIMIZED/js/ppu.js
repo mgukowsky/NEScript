@@ -9,6 +9,7 @@
 	/* SOURCEMAP
 	/			-CONSTANTS
 	/			-INTERFACE
+	/			-CRITICAL PPU PATH
 	/			-VBUFFER MANIPULATION
 	/			-SCANLINE LOGIC
 	/			-REGISTER I/O
@@ -156,6 +157,8 @@
 		this.scanlineCounter = 0;
 		this.scanlineOffsetY = 0;
 
+		this.frameCounter = 0;
+
 		this.REGISTERS = {
 			nameTableBaseAddr: 0x2000,
 			patternTableOffset: 0,
@@ -260,6 +263,8 @@
 		this.pixelCounter = 0;
 		this.scanlineCounter = 0;
 		this.scanlineOffsetY = 0;
+
+		this.frameCounter = 0;
 
 		this.REGISTERS = {
 			nameTableBaseAddr: 0x2000,
@@ -520,6 +525,178 @@
 		}
 
 		this.presentBuffer();
+	}
+
+	/************************CRITICAL PPU PATH*********************/
+
+	/*
+		These functions are run every PPU tick, and are heavily optimized,
+		since ctick() must be run 3 times for every PPU cycle! This large function
+		represents a complete inlining of the (original) private PPU API
+	*/
+
+	//Critical tick
+	PPU.prototype.ctick = function(shouldCall){
+		var rb = this.refBus, mm = this.MM,
+				rgs = this.REGISTERS, tmpVal,
+				ntp, spp, fp,		//nametable pixel, sprite pixel, final pixel
+				offset;
+
+		if (shouldCall){
+			//ppuMonitorProc
+			var r = rb.lastMMread;
+			var w = rb.lastMMwrite;
+
+			var cr = r & 0xF000;
+			var cw = w & 0xF000;
+
+			if((cr === 0x2000)){
+				switch(r){
+					case 0x2002:
+						//Reset bit 7 of PPUSTATUS if it was just read from.
+						//TODO: documentation is unclear if this also resets PPUSCROLL and PPUADDR?			
+						mm[0x2002] = mm[0x2002] & 0x7F;
+						//Reset PPU toggle
+						rgs.usePPUADDRHI = true;
+						rgs.usePPUSCROLLX = true;
+						break;
+
+					case 0x2007:
+						//A read to PPUDATA needs to be handled as a special case
+
+						var coercedAddr = rgs.ppuAddr & 0x3FFF;
+						var returnVal;
+
+						//Return the data in the VRAM buffer, then update the VRAM buffer
+						if (coercedAddr < 0x3F00){
+							returnVal = rgs.ppudataBuff;
+							rgs.ppudataBuff = this.readByte(rgs.ppuAddr);
+						} else {
+							//The exception is a palette entry, which is returned immediately
+							returnVal = this.readByte(rgs.ppuAddr);
+							rgs.ppudataBuff = returnVal;
+						}
+
+						//Increment PPU's VRAM address by 1 or 32 on a read to PPUDATA
+						rgs.ppuAddr += rgs.ppuIncr;
+						rgs.ppuAddr &= 0xFFFF;
+
+						return returnVal;
+						break;
+				}
+			}
+
+			if((cw === 0x2000) || (cw === 0x4000)){
+				switch(w){
+
+					//TODO: inline these
+
+					case PPUCTRL: 
+						this.checkPPUCTRL();
+						break;
+					case PPUMASK:
+						this.checkPPUMASK();
+						break;
+					case OAMDATA:
+						this.readOAMDATA();
+						break;
+					case PPUSCROLL:
+						this.checkPPUSCROLL();
+						break;
+					case PPUADDR:
+						this.checkPPUADDR();
+						break;
+					case PPUDATA:
+						this.checkPPUDATA();
+						break;
+					case OAMDMA:
+						//this.postDMA();
+						tmpVal = mm[OAMDMA] * 0x100;
+						rb.CPU.startDMA(tmpVal);
+						break;
+				}
+			}
+
+			//Make sure we do not erroneously respond to it again next cycle; take value off the"bus"
+			rb.lastMMwrite = null;
+			rb.lastMMread = null;
+
+		} /* if(shouldCall) */
+
+		//incrementCounters.call(this);
+
+		//Render on scanlines 1 thru 240
+		if(this.scanlineCounter > 0 && this.scanlineCounter < 241){
+			//executeScanlineTick.call(this);
+
+			//Render on first 256 pixels per scanline
+			if(this.pixelCounter < 256){
+				//Get NT pixel
+				//TODO: cache NT every 8 pixels
+
+				//The base tile address
+
+				 switch(rgs.mirroringType){
+				 	case MIRROR_HORIZONTAL:
+
+				 		break;
+
+				 	case MIRROR_VERTICAL:
+
+				 		break;
+				 }
+			}
+
+		}
+
+		if(this.pixelCounter > 340){
+			this.pixelCounter = 0;
+			this.scanlineCounter++;
+
+			if(this.scanlineCounter > 261){
+				this.scanlineCounter = 0;
+				// for(var i = 63; i > -1; i--){
+				// 	this.blitSprite(i, this.IspriteRAM);
+				// }
+			} else if(this.scanlineCounter === 0){
+				// //draw sprites
+				// for(var i = 63; i > -1; i--){
+				// 	this.blitSprite(i, this.IspriteRAM);
+				// }
+
+				//TODO: cache values here (since rendering starts here)
+				//Cache: colors, maybe patterns, sprites?
+			} else if (this.scanlineCounter === 1){
+				//Turn off vblank flag
+				mm[PPUSTATUS] &= 0x7F;
+			} else if(this.scanlineCounter === 241){
+				if(rgs.shouldGenerateNMI){
+					rb.CPU.postInterrupt(INTERRUPT_NMI);
+				}
+				//Set vblank flag
+				mm[PPUSTATUS] |= 0x80;
+
+				if(this.frameCounter === 0){
+					/*************/
+					this.blitNameTable();
+					for(var i = 63; i > -1; i--){
+						
+						this.blitSprite(i);
+					}
+					/********************/
+					this.presentBuffer();
+
+					this.frameCounter = 3;
+
+				} else {
+					this.frameCounter--;
+				}
+				
+			}
+
+		} else {
+			this.pixelCounter++;
+		}
 	}
 
 
@@ -1085,7 +1262,7 @@
 
 		this.REGISTERS.ppuAddr += this.REGISTERS.ppuIncr;
 
-		this.blitNameTableBackgroundEntry(currentX, currentY, ppuaddrVal, currentNT);
+		//this.blitNameTableBackgroundEntry(currentX, currentY, ppuaddrVal, currentNT);
 	}
 
 	function resolveNameTableBaseAddr(value){

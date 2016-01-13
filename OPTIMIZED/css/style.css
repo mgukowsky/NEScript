@@ -1,15 +1,25 @@
+@font-face {
+  font-family: 'Press_Start';
+  src: url('prstart.ttf')  format('truetype');
+}
+
 body {
-	background-color: #00FF00;
+	background-color: #BBBBBB;
+	font-family: "Press_Start";
 }
 
 h1 {
 	color: #FF0000;
 }
 
-canvas {
-	margin: 50px;
-	/*width: 800px;
-	height: 600px;*/
+canvas, label {
+	display: block;
+	margin: 50px auto;
+	text-align: center;
+}
+
+h1, p, section {
+	text-align: center;
 }
 
 #vram-visualizer {
